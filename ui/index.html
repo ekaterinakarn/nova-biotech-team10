@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>NeuroLoop — Reading a Phantom Hand</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header>
+    <h1>NeuroLoop</h1>
+    <span id="conn" class="bad">● connecting…</span>
+  </header>
+
+  <main>
+    <section class="stage">
+      <canvas id="hand" width="520" height="560"></canvas>
+      <div id="condition" class="condition"></div>
+    </section>
+
+    <aside class="panel">
+      <!-- Fidelity meter: the RAW truth (docs/02). -->
+      <div class="meter">
+        <label>Fidelity</label>
+        <div class="bar-track"><div id="fidelity-bar" class="bar"></div></div>
+      </div>
+      <div id="state" class="state">REST</div>
+      <p id="coaching" class="coaching">Waiting for the brain…</p>
+      <p id="distances" class="distances">d_exec –   d_rest –</p>
+
+      <hr />
+
+      <!-- Live demo controls -->
+      <div class="control">
+        <label><input type="checkbox" id="sham" /> Sham mode (break the model)</label>
+      </div>
+      <div class="control">
+        <label><input type="checkbox" id="manual" /> Manual slider (no EEG)</label>
+        <input type="range" id="slider" min="0" max="100" value="0" disabled />
+      </div>
+
+      <div class="conditions">
+        <span>Demo cue:</span>
+        <button data-condition="squeeze">Squeeze</button>
+        <button data-condition="imagine (feel)">Imagine — feel</button>
+        <button data-condition="imagine (watch)">Imagine — watch</button>
+        <button data-condition="mental math">Mental math</button>
+        <button data-condition="feel again">Feel again</button>
+      </div>
+    </aside>
+  </main>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

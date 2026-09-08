@@ -1,0 +1,93 @@
+/* Dark, projector-friendly theme. Big text, high contrast. */
+:root {
+  --bg: #0e1116;
+  --panel: #171b22;
+  --ink: #e8ecf2;
+  --muted: #8a94a6;
+  --green: #39d98a;
+  --amber: #f5c451;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: -apple-system, Segoe UI, Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--ink);
+}
+
+header {
+  display: flex;
+  align-items: baseline;
+  gap: 1rem;
+  padding: 1rem 1.5rem;
+  border-bottom: 1px solid #222836;
+}
+header h1 { margin: 0; font-size: 1.4rem; letter-spacing: 0.5px; }
+#conn { font-size: 0.85rem; }
+#conn.ok { color: var(--green); }
+#conn.bad { color: var(--amber); }
+
+main {
+  display: grid;
+  grid-template-columns: 1fr 340px;
+  gap: 1.5rem;
+  padding: 1.5rem;
+  align-items: start;
+}
+
+.stage {
+  position: relative;
+  display: flex;
+  justify-content: center;
+  background: radial-gradient(circle at 50% 40%, #1a2030, #0e1116 70%);
+  border-radius: 16px;
+  padding: 1rem;
+}
+#hand { max-width: 100%; }
+.condition {
+  position: absolute;
+  bottom: 1rem;
+  font-size: 1.1rem;
+  color: var(--muted);
+  letter-spacing: 1px;
+}
+
+.panel { background: var(--panel); border-radius: 16px; padding: 1.25rem; }
+.meter label { font-size: 0.8rem; color: var(--muted); text-transform: uppercase; }
+.bar-track {
+  height: 26px;
+  background: #0e1116;
+  border-radius: 13px;
+  overflow: hidden;
+  margin-top: 0.35rem;
+}
+.bar {
+  height: 100%;
+  width: 0%;
+  background: var(--muted);
+  transition: width 0.1s linear, background 0.2s;
+}
+
+.state { font-size: 2rem; font-weight: 700; margin: 0.8rem 0 0.2rem; }
+.coaching { font-size: 1.05rem; min-height: 2.6em; }
+.distances { font-size: 0.8rem; color: var(--muted); font-family: ui-monospace, monospace; }
+
+hr { border: none; border-top: 1px solid #222836; margin: 1rem 0; }
+
+.control { margin-bottom: 0.8rem; font-size: 0.95rem; }
+.control input[type="range"] { width: 100%; margin-top: 0.4rem; }
+
+.conditions { display: flex; flex-direction: column; gap: 0.4rem; margin-top: 0.6rem; }
+.conditions span { font-size: 0.8rem; color: var(--muted); text-transform: uppercase; }
+.conditions button {
+  background: #222836;
+  color: var(--ink);
+  border: 1px solid #2c3444;
+  border-radius: 8px;
+  padding: 0.5rem;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+.conditions button:hover { background: #2c3444; }
