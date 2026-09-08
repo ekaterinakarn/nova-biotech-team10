@@ -154,16 +154,16 @@ Status legend: ✅ done · 🔄 in progress · ☐ not started. Detailed plan: `
 | # | File | Status |
 |---|---|---|
 | 0 | git repair, `requirements.txt`, `.gitignore`, `README`, `scripts/00_setup_check.py`, venv | ✅ (setup check passes on M4) |
-| 0.5 | `docs/` specs (00–08) | ✅ |
-| 1 | `src/contracts.py` — the three seams | ☐ |
-| 2 | `src/config.py` — constants | ☐ |
-| 3 | `src/data.py` — PhysioNet loading, filtering, epoching | ☐ |
-| 4 | `scripts/01_explore.py` — first figures | ☐ |
-| 5 | `src/fidelity.py` — **the original contribution** | ☐ |
-| 6 | `scripts/02_validate.py` — the go/no-go | ☐ |
-| 7 | `src/sources.py` — sim / file / live | ☐ |
-| 8 | `src/server.py` — realtime loop | ☐ |
-| 9 | `ui/` — Katie | ☐ |
+| 0.5 | `docs/` specs (00–09) | ✅ |
+| 1 | `src/contracts.py` — the three seams | ✅ |
+| 2 | `src/config.py` — constants | ✅ |
+| 3 | `src/data.py` — PhysioNet loading, filtering, epoching | ✅ (subject 1 → (45, 12, 321)) |
+| 4 | `scripts/01_explore.py` — first figures | ✅ (`figures/erd_c3c4.png`) |
+| 5 | `src/fidelity.py` — **the original contribution** | ✅ (10 tests, pyriemann-verified) |
+| 6 | `scripts/02_validate.py` — the go/no-go | ✅ (**GO: p=0.002 over 20 subj**; CSP 73.3%) |
+| 7 | `src/sources.py` — sim / file / live | ✅ (live written blind, needs Windows) |
+| 8 | `src/server.py` — realtime loop | ✅ (WebSocket loop verified end-to-end) |
+| 9 | `ui/` — Canvas 2D hand | ✅ (3D upgrade handed off: `docs/09_handoff-3d-hand.md`) |
 
 **Environment note:** the full scientific stack (mne 1.12, numpy 2.5, scipy 1.18, scikit-learn 1.9,
 pyriemann 0.12, brainflow, websockets) installs and imports cleanly on Python 3.13 / macOS arm64.
