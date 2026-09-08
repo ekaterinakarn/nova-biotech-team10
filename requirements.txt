@@ -1,0 +1,33 @@
+# NeuroLoop — Python dependencies (Team 10, NOVATech × McHacks Buildathon 2026)
+#
+# Target: Python 3.11–3.13 on macOS arm64 (Apple Silicon) and Windows/Linux.
+# Install into a virtual environment:
+#     python3 -m venv .venv
+#     source .venv/bin/activate      # macOS/Linux
+#     .venv\Scripts\activate         # Windows
+#     pip install -r requirements.txt
+# Then verify with:  python scripts/00_setup_check.py
+#
+# Version floors chosen for Python 3.13 wheel availability. Let pip pick the newest
+# compatible patch release rather than pinning exact versions we can't test on every OS.
+
+# --- Core signal processing / ML ---
+mne>=1.8              # EEG loading (EDF+), filtering, epoching, CSP, topomaps
+numpy>=1.26           # arrays; the (n_epochs, n_channels, n_times) lingua franca
+scipy>=1.11           # linalg (eigh/logm) for the hand-rolled Riemannian distance
+scikit-learn>=1.4     # LDA, permutation_test_score, cross-validation, Cohen's kappa
+pyriemann>=0.6        # cross-check ONLY: validates our hand-rolled covariance/distance
+
+# --- Visualization ---
+matplotlib>=3.8       # ERD plots, CSP topomaps, validation figures for the deck
+
+# --- Realtime server (browser hand) ---
+websockets>=12.0      # 20 Hz Frame stream from server.py to the Canvas UI
+
+# --- Live amplifier (Sept 12 only) ---
+# NOTE: brainflow IMPORTS on macOS, but the ANT Neuro (eego) device backend only
+# STREAMS on Windows/Linux. On the Mac we develop against SimSource/FileSource.
+brainflow>=5.12
+
+# --- Dev / tests ---
+pytest>=8.0
