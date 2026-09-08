@@ -163,7 +163,7 @@ Status legend: ✅ done · 🔄 in progress · ☐ not started. Detailed plan: `
 | 6 | `scripts/02_validate.py` — the go/no-go | ✅ (**GO: p=0.002 over 20 subj**; CSP 73.3%) |
 | 7 | `src/sources.py` — sim / file / live | ✅ (live written blind, needs Windows) |
 | 8 | `src/server.py` — realtime loop | ✅ (WebSocket loop verified end-to-end) |
-| 9 | `ui/` — Canvas 2D hand | ✅ (3D upgrade handed off: `docs/09_handoff-3d-hand.md`) |
+| 9 | `ui/` — Canvas 2D hand | ✅ (review/harden/3D handoff: `docs/09_handoff.md`) |
 
 **Environment note:** the full scientific stack (mne 1.12, numpy 2.5, scipy 1.18, scikit-learn 1.9,
 pyriemann 0.12, brainflow, websockets) installs and imports cleanly on Python 3.13 / macOS arm64.
