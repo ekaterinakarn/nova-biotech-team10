@@ -32,6 +32,10 @@ MOTOR_CHANNELS: list[str] = [c for c in CHANNELS if c not in CONTEXT_CHANNELS]
 N_CHANNELS: int = len(CHANNELS)          # 12
 N_MOTOR: int = len(MOTOR_CHANNELS)       # 9
 
+# Positions of the motor channels within a 12-channel window, so the fidelity scorer can
+# slice them out of a full (12, n_times) array: [0,1,2,3,4,5,6,7,8] here.
+MOTOR_IDX: list[int] = [CHANNELS.index(c) for c in MOTOR_CHANNELS]
+
 # --------------------------------------------------------------------------- #
 # Sampling & windowing.
 # --------------------------------------------------------------------------- #
