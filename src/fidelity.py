@@ -35,6 +35,13 @@ def covariance(X: np.ndarray, shrinkage: float = config.SHRINKAGE) -> np.ndarray
     Returns:
         C: (n_channels, n_channels) symmetric positive-definite covariance.
     """
+    X = np.asarray(X, dtype=float)
+    if X.ndim != 2 or X.shape[0] == 0 or X.shape[1] < 2 or not np.isfinite(X).all():
+        raise ValueError("covariance requires a finite (channels, samples>=2) window")
+    if not 0 <= shrinkage <= 1:
+        raise ValueError("shrinkage must be between 0 and 1")
+    if np.any(np.var(X, axis=1) <= 0):
+        raise ValueError("flat channels cannot produce a meaningful covariance")
     Xc = X - X.mean(axis=1, keepdims=True)          # centre each channel (row)
     C = (Xc @ Xc.T) / (Xc.shape[1] - 1)             # unbiased sample covariance
     if shrinkage > 0:
@@ -47,7 +54,10 @@ def _logm_spd(C: np.ndarray) -> np.ndarray:
     """Symmetric matrix logarithm of an SPD matrix, via its eigendecomposition:
     log the eigenvalues, rebuild. (C = V diag(w) V.T  ->  log C = V diag(log w) V.T.)"""
     w, V = np.linalg.eigh(C)
-    w = np.clip(w, 1e-12, None)                     # guard tiny/negative eigenvalues
+    # A relative floor preserves distances when volts are converted to microvolts.
+    if not np.isfinite(w).all() or w[-1] <= 0:
+        raise ValueError("matrix must have a positive finite spectrum")
+    w = np.maximum(w, w[-1] * np.finfo(float).eps)
     return (V * np.log(w)) @ V.T
 
 
@@ -77,7 +87,7 @@ def riemannian_distance(A: np.ndarray, B: np.ndarray, metric: str = config.RIEMA
 
 def logeuclid_mean(covs: list[np.ndarray]) -> np.ndarray:
     """Average of SPD matrices done correctly: mean in log-space, mapped back.
-    exp( mean_i log C_i ). A plain elementwise average is wrong on this manifold."""
+    exp( mean_i log C_i ). This chooses log-Euclidean geometry; arithmetic SPD means are also SPD."""
     log_mean = np.mean([_logm_spd(C) for C in covs], axis=0)
     return _expm_spd(log_mean)
 
@@ -120,6 +130,8 @@ class FidelityScorer:
         Args:
             X_exec, X_rest: (n_epochs, n_channels, n_times) movement and rest windows.
         """
+        if len(X_exec) == 0 or len(X_rest) == 0:
+            raise ValueError("both calibration classes require windows")
         self.C_exec = logeuclid_mean([self._cov(x) for x in X_exec])
         self.C_rest = logeuclid_mean([self._cov(x) for x in X_rest])
 

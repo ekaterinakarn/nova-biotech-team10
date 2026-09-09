@@ -45,7 +45,7 @@ MOTOR_IDX: list[int] = [CHANNELS.index(c) for c in MOTOR_CHANNELS]
 FS: float = 160.0                        # Hz (PhysioNet)
 
 WINDOW_SEC: float = 2.0                  # each scored window is 2 seconds
-STEP_SEC: float = 0.5                    # slide the window 0.5 s each tick -> ~4 scores/s offline
+STEP_SEC: float = 0.5                    # slide the window 0.5 s each tick -> ~2 scores/s live
 
 
 def window_samples(fs: float = FS) -> int:
@@ -62,8 +62,8 @@ WINDOW_SAMPLES: int = window_samples(FS)  # 320 at 160 Hz
 # --------------------------------------------------------------------------- #
 # Filtering (see docs/08 for the physiology).
 # --------------------------------------------------------------------------- #
-# 8–30 Hz spans mu (8–12) and beta (13–30) — where motor imagery lives — and is also a
-# free artifact filter: eye blinks are <4 Hz and jaw EMG is >30 Hz, so both are gone.
+# 8–30 Hz spans mu (8–12) and beta (13–30) — where motor imagery can modulate rhythms. The filter
+# attenuates some artifact components; in-band eye/muscle contamination can remain.
 BAND_HZ: tuple[float, float] = (8.0, 30.0)
 NOTCH_HZ: float = 60.0                    # North America mains hum (NOT 50 Hz)
 
@@ -98,3 +98,8 @@ IMAGINE_BOTH_RUNS: list[int] = [6, 10, 14]# imagined:       T1=both fists, T2=bo
 
 # Subjects with known-bad recordings — exclude from validation.
 EXCLUDED_SUBJECTS: list[int] = [88, 89, 92, 100, 104]
+
+# Conservative artifact heuristics relative to calibration; validate on hardware.
+QUALITY_MIN_RATIO = 0.01
+QUALITY_MAX_RATIO = 25.0
+QUALITY_MAX_KURTOSIS = 30.0

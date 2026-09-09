@@ -107,3 +107,17 @@ def test_score_before_calibrate_raises():
     scorer = FidelityScorer(channel_idx=list(range(9)))
     with pytest.raises(RuntimeError):
         scorer.score(np.random.default_rng(6).standard_normal((9, 320)))
+
+
+@pytest.mark.parametrize("window", [np.zeros((9, 320)), np.ones((9, 1)), np.full((9, 320), np.nan)])
+def test_degenerate_windows_rejected(window):
+    with pytest.raises(ValueError):
+        covariance(window)
+
+
+@pytest.mark.parametrize("scale", [1e-6, 1e-9, 1e6])
+def test_log_distance_is_invariant_to_shared_voltage_units(scale):
+    rng = np.random.default_rng(41)
+    a, b = covariance(rng.normal(size=(9, 320))), covariance(rng.normal(size=(9, 320)))
+    assert riemannian_distance(a*scale**2, b*scale**2) == pytest.approx(
+        riemannian_distance(a, b), rel=1e-8)

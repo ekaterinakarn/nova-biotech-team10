@@ -1,7 +1,7 @@
 """Three interchangeable EEG sources, all matching the Source contract (contracts.py).
 
     SimSource  — synthetic data; how you demo/test with no hardware and no data files.
-    FileSource — replays a real PhysioNet recording at true speed. THE MAC DEMO.
+    FileSource — replays curated PhysioNet epochs at two seconds per window. THE MAC DEMO.
     LiveSource — BrainFlow -> ANT Neuro eego. Written blind; runs on Windows on Sept 12.
 
 server.py holds one of these and never knows which. Swapping them is one line
@@ -54,7 +54,7 @@ class SimSource:
     def stream(self) -> Iterator[np.ndarray]:
         # w oscillates 0..1 over ~10 s; a convex mix of two SPD matrices is still SPD.
         while True:
-            self._phase += 0.03
+            self._phase += 2 * np.pi * config.STEP_SEC / 10
             w = 0.5 * (1 + np.sin(self._phase))          # 0..1
             sigma = (1 - w) * self._sigma_rest + w * self._sigma_exec
             yield self._draw(sigma)
@@ -77,9 +77,9 @@ class FileSource:
         seq = []
         for i in range(max(len(rest), len(imagery))):
             if i < len(rest):
-                seq.append(rest[i])
+                seq.append((rest[i], "recorded rest"))
             if i < len(imagery):
-                seq.append(imagery[i])
+                seq.append((imagery[i], "recorded imagery"))
         self._sequence = seq
 
     def calibration_windows(self) -> tuple[np.ndarray, np.ndarray]:
@@ -88,12 +88,13 @@ class FileSource:
     def stream(self) -> Iterator[np.ndarray]:
         # Loop the recorded sequence forever so the demo never runs out.
         while True:
-            for window in self._sequence:
+            for window, label in self._sequence:
+                self.recorded_condition = label
                 yield window
 
 
 # --------------------------------------------------------------------------- #
-# LiveSource — BrainFlow -> ANT Neuro eego. Written blind, tested on Windows.
+# LiveSource — BrainFlow -> ANT Neuro eego. Hardware integration remains unverified.
 # --------------------------------------------------------------------------- #
 class LiveSource:
     """Live amplifier via BrainFlow. Imports fine on macOS but only STREAMS on
@@ -104,7 +105,7 @@ class LiveSource:
         self,
         board_id: int | None = None,
         serial_port: str = "",
-        channel_names: list[str] | None = None,
+        channel_rows: list[int] | None = None,
         exec_sec: float = 60.0,
         rest_sec: float = 60.0,
     ) -> None:
@@ -124,25 +125,43 @@ class LiveSource:
         self._exec_sec, self._rest_sec = exec_sec, rest_sec
 
         # Which board rows correspond to our 12 channels. Default to the board's EEG
-        # rows; override channel_names once the exact eego layout is confirmed.
+        # rows; provide channel_rows once the exact eego layout is confirmed.
         eeg_rows = BoardShim.get_eeg_channels(board_id)
-        self._rows = eeg_rows[: config.N_CHANNELS]
+        if channel_rows is None:
+            raise ValueError("Live EEG requires verified channel_rows in config.CHANNELS order; "
+                             "confirm the amplifier and montage with the ANT Neuro mentor")
+        if len(channel_rows) != config.N_CHANNELS or len(set(channel_rows)) != config.N_CHANNELS or not set(channel_rows) <= set(eeg_rows):
+            raise ValueError("channel_rows must contain 12 unique EEG rows")
+        self._rows = channel_rows
 
         self._board.prepare_session()
         self._board.start_stream()
 
-    def _grab(self, n: int) -> np.ndarray:
+    def _grab(self, n: int, filtered: bool = True) -> np.ndarray:
         """Newest n samples on our 12 channels -> (12, n)."""
         buf = self._board.get_current_board_data(n)   # (n_rows, n)
-        return buf[self._rows, :]
+        raw = buf[self._rows, :]
+        if not filtered or raw.shape[1] < self.n_times:
+            return raw
+        return self._filter(raw)
+
+    def _filter(self, raw):
+        # Identical window filtering for live calibration and inference. This is a
+        # windowed IIR approximation, not the offline continuous MNE FIR filter.
+        from scipy.signal import butter, sosfiltfilt, iirnotch, filtfilt
+        if self.fs > 2 * config.NOTCH_HZ:
+            b, a = iirnotch(config.NOTCH_HZ, 30, self.fs)
+            raw = filtfilt(b, a, raw, axis=-1)
+        sos = butter(4, config.BAND_HZ, btype="bandpass", fs=self.fs, output="sos")
+        return sosfiltfilt(sos, raw, axis=-1)
 
     def _collect(self, seconds: float) -> np.ndarray:
         """Block for `seconds`, then cut the buffer into 2-second windows -> (n, 12, t)."""
         import time
         time.sleep(seconds)
-        raw = self._grab(int(seconds * self.fs))       # (12, seconds*fs)
+        raw = self._grab(int(seconds * self.fs), filtered=False)       # (12, seconds*fs)
         step = self.n_times
-        windows = [raw[:, i:i + step] for i in range(0, raw.shape[1] - step, step)]
+        windows = [self._filter(raw[:, i:i + step]) for i in range(0, raw.shape[1] - step + 1, step)]
         return np.stack(windows) if windows else np.empty((0, config.N_CHANNELS, step))
 
     def calibration_windows(self) -> tuple[np.ndarray, np.ndarray]:
@@ -155,17 +174,27 @@ class LiveSource:
     def stream(self) -> Iterator[np.ndarray]:
         import time
         while True:
-            yield self._grab(self.n_times)
-            time.sleep(config.WINDOW_SEC * config.STEP_SEC / config.WINDOW_SEC)
+            window = self._grab(self.n_times)
+            if window.shape[1] == self.n_times:
+                yield window
+            else:
+                time.sleep(config.STEP_SEC)
+
+    def close(self):
+        """Release amplifier resources on exit."""
+        try:
+            self._board.stop_stream()
+        finally:
+            self._board.release_session()
 
 
 # --------------------------------------------------------------------------- #
-def make_source(kind: str, subject: int = 1):
+def make_source(kind: str, subject: int = 1, **live_options):
     """Factory used by server.py: map a --source string to a Source instance."""
     if kind == "sim":
         return SimSource()
     if kind == "file":
         return FileSource(subject=subject)
     if kind == "live":
-        return LiveSource()
+        return LiveSource(**live_options)
     raise ValueError(f"unknown source {kind!r} (use sim|file|live)")

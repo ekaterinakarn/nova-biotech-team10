@@ -54,8 +54,8 @@ def load_raw(subject: int, runs: list[int], *, filtered: bool = True) -> mne.io.
 
     if filtered:
         # 60 Hz mains hum (North America — NOT 50). Then 8-30 Hz: mu (8-12) + beta
-        # (13-30), where motor imagery lives, which also drops blinks (<4 Hz) and jaw
-        # EMG (>30 Hz) for free.
+        # (13-30), where motor imagery can modulate activity. Filtering does not
+        # guarantee removal of eye or muscle artifacts.
         raw.notch_filter(config.NOTCH_HZ)
         raw.filter(config.BAND_HZ[0], config.BAND_HZ[1])
 

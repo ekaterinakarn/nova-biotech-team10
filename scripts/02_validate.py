@@ -19,6 +19,7 @@ Usage:
 from __future__ import annotations
 
 import sys
+import json
 from pathlib import Path
 
 import numpy as np
@@ -30,7 +31,7 @@ import mne
 from mne.decoding import CSP
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
 from sklearn.metrics import accuracy_score, cohen_kappa_score, roc_auc_score
-from sklearn.model_selection import StratifiedKFold, cross_val_score
+from sklearn.model_selection import LeaveOneGroupOut, cross_val_score
 from sklearn.pipeline import Pipeline
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -49,6 +50,7 @@ def fidelity_go_no_go(subjects: list[int]):
     rest windows. Returns per-subject mean-fidelity differences, pooled (true, pred)
     labels for kappa/accuracy, and per-subject AUCs."""
     diffs, aucs = [], []
+    records = []
     all_true, all_pred = [], []
     for s in subjects:
         cw = data.condition_windows(s)
@@ -67,12 +69,17 @@ def fidelity_go_no_go(subjects: list[int]):
         scores = np.concatenate([f_imag, f_rest])
         labels = np.concatenate([np.ones(len(f_imag)), np.zeros(len(f_rest))])
         aucs.append(roc_auc_score(labels, scores))
+        records.append(dict(subject=s, auc=float(aucs[-1]),
+                            imagery_mean=float(f_imag.mean()), rest_mean=float(f_rest.mean()),
+                            accuracy=float(accuracy_score(labels, scores > .5)),
+                            kappa=float(cohen_kappa_score(labels, scores > .5)),
+                            n_imagery=len(f_imag), n_rest=len(f_rest)))
         all_true.extend(labels.tolist())
         all_pred.extend((scores > 0.5).astype(int).tolist())
         print(f"  subject {s:>3}: AUC {aucs[-1]:.2f}  "
               f"fidelity imagery {f_imag.mean():.2f} vs rest {f_rest.mean():.2f}")
 
-    return np.array(diffs), np.array(all_true), np.array(all_pred), np.array(aucs)
+    return np.array(diffs), np.array(all_true), np.array(all_pred), np.array(aucs), records
 
 
 def sign_flip_test(diffs: np.ndarray, n_perm: int = 1000, seed: int = 0):
@@ -95,11 +102,14 @@ def sign_flip_test(diffs: np.ndarray, n_perm: int = 1000, seed: int = 0):
 # Part B: CSP+LDA left/right baseline, with vs without Fz/Pz/Oz.
 # --------------------------------------------------------------------------- #
 def csp_lda_accuracy(subject: int, motor_only: bool) -> tuple[float, float]:
-    """5-fold CV accuracy of CSP+LDA classifying imagined LEFT vs RIGHT fist for one
-    subject. `motor_only` drops Fz/Pz/Oz (the occipital-leak fix)."""
-    epochs = data.load_epochs(subject, config.IMAGINE_LR_RUNS)[["T1", "T2"]]
-    X = epochs.get_data(copy=True)                # (n_epochs, 12, n_times)
-    y = epochs.events[:, -1]                      # T1/T2 codes -> two classes
+    """Leave-one-run-out CSP/LDA; no trial from a test run enters training."""
+    windows, labels, groups = [], [], []
+    for run in config.IMAGINE_LR_RUNS:
+        epochs = data.load_epochs(subject, [run])[["T1", "T2"]]
+        windows.append(epochs.get_data(copy=True))
+        labels.extend((epochs.events[:, -1] == epochs.event_id["T2"]).astype(int))
+        groups.extend([run] * len(epochs))
+    X, y = np.concatenate(windows), np.array(labels)
     if motor_only:
         X = X[:, config.MOTOR_IDX, :]             # keep the 9 motor channels
 
@@ -107,8 +117,8 @@ def csp_lda_accuracy(subject: int, motor_only: bool) -> tuple[float, float]:
         ("csp", CSP(n_components=6, reg="ledoit_wolf")),
         ("lda", LinearDiscriminantAnalysis()),
     ])
-    cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=0)
-    scores = cross_val_score(clf, X, y, cv=cv)
+    cv = LeaveOneGroupOut()
+    scores = cross_val_score(clf, X, y, cv=cv, groups=np.array(groups), error_score="raise")
     return scores.mean(), scores.std()
 
 
@@ -118,7 +128,9 @@ def main() -> int:
     subjects = [s for s in range(1, n + 1) if s not in config.EXCLUDED_SUBJECTS]
 
     print(f"\n=== Part A: fidelity go/no-go over {len(subjects)} subjects ===")
-    diffs, y_true, y_pred, aucs = fidelity_go_no_go(subjects)
+    diffs, y_true, y_pred, aucs, records = fidelity_go_no_go(subjects)
+    if not len(diffs):
+        raise ValueError("No valid subjects")
 
     acc = accuracy_score(y_true, y_pred)
     kappa = cohen_kappa_score(y_true, y_pred)
@@ -131,7 +143,7 @@ def main() -> int:
     print(f"  Cohen's kappa              : {kappa:.3f}")
     print(f"  mean fidelity diff (imag-rest): {observed:+.3f}")
     print(f"  permutation p-value        : {p:.4f}")
-    verdict = "SEPARATES (headline)" if p < 0.05 else "does NOT separate -> fallback to L/R"
+    verdict = "group-level shift detected; inspect effect size and individual spread" if p < 0.05 else "no clear group-level shift"
     print(f"  VERDICT: {verdict}")
 
     print(f"\n=== Part B: CSP+LDA left/right baseline (subject 1) ===")
@@ -140,6 +152,20 @@ def main() -> int:
     print(f"  all 12 channels (incl. Oz): {acc12:.3f} ± {std12:.3f}")
     print(f"  9 motor channels only     : {acc9:.3f} ± {std9:.3f}")
     print(f"  occipital-leak delta      : {acc12 - acc9:+.3f}")
+
+    rng = np.random.default_rng(0)
+    bootstrap = np.mean(rng.choice(aucs, size=(5000, len(aucs)), replace=True), axis=1)
+    interval = np.quantile(bootstrap, [.025, .975]).tolist()
+    report = dict(subjects=records, mean_auc=float(aucs.mean()),
+                  mean_auc_subject_bootstrap_95ci=interval,
+                  accuracy=float(acc), kappa=float(kappa), permutation_p=float(p),
+                  fidelity_protocol="personal execution calibration, separate imagery runs",
+                  csp_protocol="leave-one-imagery-run-out, subject 1",
+                  csp_12ch=dict(mean=float(acc12), sd=float(std12)),
+                  csp_motor=dict(mean=float(acc9), sd=float(std9)))
+    FIG_DIR.mkdir(exist_ok=True)
+    (FIG_DIR / "validation_results.json").write_text(json.dumps(report, indent=2))
+    print(f"  mean AUC subject-bootstrap 95% CI: {interval}")
 
     # Figure: per-subject fidelity difference (imagery - rest), for the deck.
     FIG_DIR.mkdir(exist_ok=True)
@@ -152,7 +178,7 @@ def main() -> int:
                label=f"group mean {observed:+.3f} (p={p:.3f})")
     ax.set_xlabel("subject (sorted)")
     ax.set_ylabel("mean fidelity: imagery − rest")
-    ax.set_title("Fidelity separates imagined movement from rest, per subject")
+    ax.set_title("Held-out imagery versus rest: per-subject fidelity difference")
     ax.legend()
     fig.tight_layout()
     out = FIG_DIR / "fidelity_validation.png"

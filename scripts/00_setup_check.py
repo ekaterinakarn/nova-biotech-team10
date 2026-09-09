@@ -54,7 +54,7 @@ def main() -> int:
     print()
 
     print("Required packages:")
-    all_ok = all(_check(m, p) for m, p in REQUIRED)
+    all_ok = all([_check(m, p) for m, p in REQUIRED])
 
     print("\nOptional (live amplifier):")
     for mod_name, pip_name in OPTIONAL:

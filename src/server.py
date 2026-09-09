@@ -20,6 +20,7 @@ import asyncio
 import functools
 import http.server
 import threading
+import time
 from pathlib import Path
 
 import sys
@@ -33,6 +34,7 @@ from src import config
 from src.contracts import Frame
 from src.fidelity import FidelityScorer
 from src.sources import make_source
+from src.quality import QualityGate
 
 UI_DIR = Path(__file__).resolve().parents[1] / "ui"
 
@@ -40,17 +42,19 @@ UI_DIR = Path(__file__).resolve().parents[1] / "ui"
 def _state_and_coaching(fidelity: float) -> tuple[str, str]:
     """Map a fidelity value to a UI state label and the closed-loop coaching prompt."""
     if fidelity >= config.ENGAGED_THRESHOLD:
-        return "engaged", "Great — keep feeling the tension."
+        return "engaged", "Continue imagining the sensation of gently closing your hand."
     if fidelity <= config.REST_THRESHOLD:
-        return "rest", "Stop picturing it. Feel the tension in your forearm."
+        return "rest", "Relax, then imagine gently closing your hand without moving."
     return "ambiguous", "Focus on the sensation of squeezing, not the picture."
 
 
 class NeuroLoopServer:
     """Owns the source, the scorer, the connected clients, and the demo controls."""
 
-    def __init__(self, source_kind: str, subject: int, sham: bool) -> None:
-        self.source = make_source(source_kind, subject=subject)
+    def __init__(self, source_kind: str, subject: int, sham: bool, **live_options) -> None:
+        self.source = make_source(source_kind, subject=subject, **live_options)
+        self.source_kind = source_kind
+        self.quality = None
         self.scorer = FidelityScorer()
         self.clients: set = set()
         self.sham = sham
@@ -61,22 +65,16 @@ class NeuroLoopServer:
     def calibrate(self) -> None:
         """Build the personal templates from the source's calibration windows."""
         X_exec, X_rest = self.source.calibration_windows()
+        self.quality = QualityGate(np.concatenate([X_exec, X_rest]))
+        X_exec = np.array([w for w in X_exec if self.quality.check(w)])
+        X_rest = np.array([w for w in X_rest if self.quality.check(w)])
+        if min(len(X_exec), len(X_rest)) < 5:
+            raise ValueError("Too few clean calibration windows; repeat calibration")
         self.scorer.calibrate(X_exec, X_rest)
         # Keep the honest templates so we can toggle sham on/off live.
         self._templates = (self.scorer.C_exec.copy(), self.scorer.C_rest.copy())
-        self._apply_sham()
         print(f"calibrated on {len(X_exec)} movement + {len(X_rest)} rest windows "
               f"@ {self.source.fs:.0f} Hz")
-
-    def _apply_sham(self) -> None:
-        """Sham = make both templates identical, so fidelity collapses to ~0.5 (chance).
-        This is the 'break it on purpose' demo and the sham arm of a future trial."""
-        exec_t, rest_t = self._templates
-        if self.sham:
-            self.scorer.C_exec = rest_t.copy()   # identical templates -> d_exec ~ d_rest
-            self.scorer.C_rest = rest_t.copy()
-        else:
-            self.scorer.C_exec, self.scorer.C_rest = exec_t.copy(), rest_t.copy()
 
     async def handle_client(self, ws) -> None:
         """Register a browser, then listen for its control messages (sham/condition)."""
@@ -84,9 +82,9 @@ class NeuroLoopServer:
         try:
             async for message in ws:
                 if message == "sham:on":
-                    self.sham = True; self._apply_sham()
+                    self.sham = True
                 elif message == "sham:off":
-                    self.sham = False; self._apply_sham()
+                    self.sham = False
                 elif message.startswith("condition:"):
                     self.condition = message.split(":", 1)[1]
         finally:
@@ -95,35 +93,60 @@ class NeuroLoopServer:
     async def produce(self) -> None:
         """Score windows and broadcast Frames at STREAM_HZ."""
         period = 1.0 / config.STREAM_HZ
-        t = 0.0
-        for window in self.source.stream():
-            fidelity = self.scorer.score(window)
-            d_exec, d_rest = self.scorer.distances(window)
-            # Exponential moving average -> a fluid hand (docs/02).
-            self._activation = (config.SMOOTHING * self._activation
-                                + (1 - config.SMOOTHING) * fidelity)
-            state, coaching = _state_and_coaching(fidelity)
-            frame = Frame(
-                t=round(t, 3), fidelity=round(fidelity, 3),
-                activation=round(self._activation, 3), state=state,
-                condition=self.condition, signal_ok=True, coaching=coaching,
-                d_exec=round(d_exec, 3), d_rest=round(d_rest, 3),
-            )
-            if self.clients:
-                websockets.broadcast(self.clients, frame.to_json())
-            t += period
-            await asyncio.sleep(period)
+        interval = config.WINDOW_SEC if self.source_kind == "file" else config.STEP_SEC
+        stream = self.source.stream()
+        started = time.monotonic()
+        while True:
+            # Source acquisition may block; never block WebSocket controls/reconnects.
+            window = await asyncio.to_thread(next, stream)
+            valid = self.quality.check(window)
+            if valid:
+                d_exec, d_rest = self.scorer.distances(window)
+                total = d_exec + d_rest
+                fidelity = d_rest / total if total > 0 else 0.5
+                state, coaching = _state_and_coaching(fidelity)
+            else:
+                fidelity, d_exec, d_rest = 0.5, 0.0, 0.0
+                state, coaching = "rest", "Signal paused. Relax and check electrode contact."
+            deadline = time.monotonic() + interval
+            while time.monotonic() < deadline:
+                # Re-evaluate the control immediately, even while holding a replay window.
+                shown = 0.5 if self.sham else fidelity
+                shown_state, shown_coaching = _state_and_coaching(shown) if valid else (state, coaching)
+                self._activation = (config.SMOOTHING * self._activation
+                                    + (1 - config.SMOOTHING) * (shown if valid else 0))
+                frame = Frame(
+                    t=round(time.monotonic() - started, 3), fidelity=round(shown, 3),
+                    activation=round(self._activation, 3), state=shown_state,
+                    condition=self.condition, signal_ok=valid, coaching=shown_coaching,
+                    d_exec=round(d_exec, 3), d_rest=round(d_rest, 3),
+                )
+                if self.clients:
+                    import json
+                    payload = json.loads(frame.to_json())
+                    payload.update(source=self.source_kind, sham=self.sham,
+                                   recorded_condition=getattr(self.source, "recorded_condition", ""))
+                    websockets.broadcast(self.clients, json.dumps(payload))
+                await asyncio.sleep(period)
 
     async def run(self) -> None:
-        self.calibrate()
+        await asyncio.to_thread(self.calibrate)
         async with websockets.serve(self.handle_client, config.WS_HOST, config.WS_PORT):
             print(f"WebSocket streaming on ws://{config.WS_HOST}:{config.WS_PORT}")
             await self.produce()
 
 
+class DemoUIHandler(http.server.SimpleHTTPRequestHandler):
+    """Development assets must be reloaded after UI changes, including ES modules."""
+
+    def end_headers(self):
+        self.send_header("Cache-Control", "no-store")
+        super().end_headers()
+
+
 def serve_ui(port: int) -> None:
     """Serve the ui/ folder over HTTP in a background thread (stdlib only)."""
-    handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=str(UI_DIR))
+    handler = functools.partial(DemoUIHandler, directory=str(UI_DIR))
     httpd = http.server.ThreadingHTTPServer((config.WS_HOST, port), handler)
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
     print(f"UI available at http://{config.WS_HOST}:{port}")
@@ -132,17 +155,33 @@ def serve_ui(port: int) -> None:
 def main() -> None:
     ap = argparse.ArgumentParser(description="NeuroLoop realtime server")
     ap.add_argument("--source", choices=["sim", "file", "live"], default="file")
-    ap.add_argument("--subject", type=int, default=1, help="PhysioNet subject for --source file")
+    ap.add_argument("--subject", type=int, default=4, help="PhysioNet subject for --source file")
     ap.add_argument("--sham", action="store_true", help="start with the model broken (chance)")
     ap.add_argument("--ui-port", type=int, default=config.WS_PORT + 1)
+    ap.add_argument("--board-id", type=int, help="Mentor-confirmed BrainFlow board ID")
+    ap.add_argument("--channel-rows", help="12 comma-separated BrainFlow rows in config.CHANNELS order")
+    ap.add_argument("--serial-port", default="")
     args = ap.parse_args()
+    live_options = {}
+    if args.source == "live":
+        if args.board_id is None or args.channel_rows is None:
+            ap.error("live requires --board-id and --channel-rows verified with the mentor")
+        try:
+            rows = [int(row) for row in args.channel_rows.split(",")]
+        except ValueError:
+            ap.error("channel rows must be comma-separated integers")
+        live_options = dict(board_id=args.board_id, channel_rows=rows, serial_port=args.serial_port)
 
     serve_ui(args.ui_port)
-    server = NeuroLoopServer(args.source, args.subject, args.sham)
+    server = NeuroLoopServer(args.source, args.subject, args.sham, **live_options)
     try:
         asyncio.run(server.run())
     except KeyboardInterrupt:
         print("\nstopped")
+    finally:
+        close = getattr(server.source, "close", None)
+        if close:
+            close()
 
 
 if __name__ == "__main__":
