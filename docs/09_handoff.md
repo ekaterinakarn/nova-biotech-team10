@@ -1,5 +1,9 @@
 # 09 — Handoff & Continuation (review · harden · extend)
 
+> Latest update: EEG-only confirmed; hardware first available on build day. The hand now uses a locally bundled rigged GLB. See [EEG-to-hand connection and new validation](12_eeg-to-hand.md), which supersedes earlier renderer/validation status below.
+
+> September 8 review: see [current implementation, evidence caveats and priorities](10_review-and-next-steps.md). Historical claims and task statuses below are not all verified.
+
 This is a self-contained brief for continuing the project with another collaborator (human
 or AI). The goal is threefold: **(1) re-review every file and the models for correctness,
 (2) harden the system so it can't fail on demo day, (3) extend it** (the 3D hand, stretch

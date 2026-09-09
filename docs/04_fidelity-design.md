@@ -1,5 +1,7 @@
 # 04 — The Fidelity Score (our original contribution)
 
+> September 8 review: see [current implementation, evidence caveats and priorities](10_review-and-next-steps.md). Historical claims and task statuses below are not all verified.
+
 This is the ~30 lines that are genuinely original in the project. Everything else is a library call;
 this is the idea.
 
@@ -44,9 +46,8 @@ C = (1 - a) * C + a * trace(C)/n * I      # a small, e.g. 0.05
 
 ## The distance: Riemannian, not Euclidean
 
-Covariance matrices live on a curved manifold of SPD matrices, not in flat space. Comparing them
-with ordinary Euclidean distance is wrong (it can even produce non-SPD averages). The correct
-distance respects the manifold's geometry.
+Covariance matrices live on a curved manifold of SPD matrices, not in flat space. Log-Euclidean distance is our chosen geometry for comparison. Convex arithmetic averages
+of SPD matrices remain SPD; a log-Euclidean mean is an alternative geometric choice.
 
 We use the **log-Euclidean distance** (fast, robust, and easy to explain), with the affine-invariant
 distance available as a cross-check:

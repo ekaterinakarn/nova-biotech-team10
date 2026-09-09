@@ -1,5 +1,7 @@
 # 06 — Demo & Validation (how we show it isn't fake)
 
+> September 8 review: see [current implementation, evidence caveats and priorities](10_review-and-next-steps.md). Historical claims and task statuses below are not all verified.
+
 A hand moving on screen proves nothing on its own — a BCI demo can be secretly driven by jaw
 clenches. The demo and the validation are designed to be **falsifiable**.
 

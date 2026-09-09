@@ -1,5 +1,7 @@
 # 00 — Project Overview
 
+> September 8 review: see [current implementation, evidence caveats and priorities](10_review-and-next-steps.md). Historical claims and task statuses below are not all verified.
+
 ## One-sentence pitch
 
 A 12-channel closed-loop system that measures whether the user is **genuinely engaging their

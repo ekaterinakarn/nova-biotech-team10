@@ -1,5 +1,7 @@
 # 07 — Pitch Deck Outline (`10_buildathon.pptx` + `.pdf`)
 
+> September 8 review: see [current implementation, evidence caveats and priorities](10_review-and-next-steps.md). Historical claims and task statuses below are not all verified.
+
 The deck must cover these sections (in any order). Build it in Canva, export as **both** `.pptx`
 and `.pdf`, named `10_buildathon`.
 

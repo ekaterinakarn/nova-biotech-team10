@@ -1,5 +1,7 @@
 # 05 — Build Plan (file-by-file order + timeline)
 
+> September 8 review: see [current implementation, evidence caveats and priorities](10_review-and-next-steps.md). Historical claims and task statuses below are not all verified.
+
 The rule: **build in this order, test each file before the next.** The system is never more than
 one step from something demonstrable, and every file is small enough to explain line-by-line.
 

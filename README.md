@@ -3,10 +3,9 @@
 **A closed-loop EEG system for phantom limb pain therapy.**
 NOVATech × McHacks Buildathon 2026, sponsored by ANT Neuro.
 
-> We measure whether a user is *genuinely engaging their motor cortex* — scored against their
-> own attempted-movement signature — and drive a virtual hand on screen in proportion to that
-> score. It turns an invisible, unverifiable therapy into a measurable dose.
-> **EEG is the instrument, not the drug.**
+> A research prototype comparing motor-channel EEG covariance with personal movement and
+> rest references, then turning that similarity into virtual-hand feedback. Clinical
+> benefit and reliable live control have not yet been established.
 
 ---
 
@@ -16,7 +15,7 @@ NOVATech × McHacks Buildathon 2026, sponsored by ANT Neuro.
 |---|---|
 | `src/` | The pipeline: contracts, config, data loading, the fidelity score, sources, realtime server |
 | `scripts/` | Runnable entry points: setup check, exploration figures, the validation go/no-go, replay demo |
-| `ui/` | The browser hand (Canvas 2D, zero dependencies) |
+| `ui/` | Research dashboard + rigged GLB hand (locally bundled Three.js, Canvas fallback) |
 | `docs/` | Specs & design docs — the *why* behind every decision (start at `docs/00_overview.md`) |
 | `tests/` | Unit tests (fidelity behaviour, hand-rolled-vs-pyriemann cross-check, Frame JSON) |
 | `figures/` | Generated plots (validation, ERD, CSP topomaps) |
@@ -34,12 +33,20 @@ python scripts/00_setup_check.py     # confirms every import works on your machi
 ## Run the demo with no hardware (the Mac path)
 
 ```bash
-python src/server.py --source file   # replays a real PhysioNet recording at true speed
-# then open ui/index.html in a browser — the hand moves from real brain data
+python src/server.py --source sim    # synthetic rehearsal, no download
+# open http://127.0.0.1:8766
+python src/server.py --source file --subject 4  # curated recorded EEG epochs
 ```
 
-On **Sept 12** we swap `--source file` for `--source live` (BrainFlow → ANT Neuro eego,
-Windows/Linux laptop). Nothing else changes — that is the point of the `Source` seam.
+Live hardware requires verified `--board-id` and `--channel-rows` (12 comma-separated
+BrainFlow rows in `config.CHANNELS` order). Confirm these with the mentor first.
+
+See [the review and prioritized plan](docs/10_review-and-next-steps.md) and
+[the 3D/Blender guide](docs/11_blender-and-3d.md). The dashboard includes manual exploration,
+quality/stale-signal handling, a trace, score integral and CSV session export.
+
+See [how EEG drives the rigged hand](docs/12_eeg-to-hand.md) for the implemented connection,
+updated validation results, and hardware-day checklist. EEG-only; no fNIRS.
 
 ## The architecture in one line
 
