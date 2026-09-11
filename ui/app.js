@@ -48,7 +48,8 @@ function tick(){
   el('distances').textContent=valid&&!f.sham?`d_exec ${f.d_exec} · d_rest ${f.d_rest}`:'d_exec — · d_rest —';
   el('condition').textContent=f?.source==='file'?f.recorded_condition:(f?.condition||'Ready when you are');
   el('sham').disabled=stale||manual;
-  document.querySelectorAll('[data-condition]').forEach(b=>{b.disabled=stale||manual||f?.source==='file';b.classList.toggle('active',b.dataset.condition===f?.condition);});
+  document.querySelectorAll('[data-condition]').forEach(b=>{b.disabled=stale||manual||f?.source==='file'||f?.source==='sim';b.classList.toggle('active',b.dataset.condition===f?.condition);});
+  el('condition-note').style.display=f?.source==='sim'?'':'none';
   drawTrace();requestAnimationFrame(tick);
 }
 function drawTrace(){
