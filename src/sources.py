@@ -258,10 +258,18 @@ class LslSource:
         stream_labels = self._read_labels(info)
         lut = {lab.strip().upper(): i for i, lab in enumerate(stream_labels)}
         missing = [c for c in self.channel_names if c.upper() not in lut]
-        if missing:
+        if not missing:
+            self._pick = [lut[c.upper()] for c in self.channel_names]
+        elif len(stream_labels) == len(self.channel_names):
+            # Some connectors (e.g. the g.tec Unicorn's LSL output) advertise generic
+            # labels like "EEG 1".."EEG 8". If the stream has exactly as many channels as
+            # our montage, map by POSITION in the montage's known electrode order.
+            print(f"WARNING: stream labels {stream_labels} don't match montage names; "
+                  f"mapping BY POSITION as {self.channel_names}. Verify the electrode order!")
+            self._pick = list(range(len(self.channel_names)))
+        else:
             raise RuntimeError(f"Stream is missing montage channels {missing}. "
                                f"Available: {stream_labels}. Use --lsl-channels to match.")
-        self._pick = [lut[c.upper()] for c in self.channel_names]
         self._buf = np.zeros((len(self.channel_names), 0))
         print(f"LSL: '{info.name()}' @ {self.fs:.0f} Hz -> {len(self.channel_names)} channels "
               f"({montage}); {len(self.motor_idx)} motor")
