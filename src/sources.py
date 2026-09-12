@@ -228,9 +228,11 @@ class LslSource:
         stream_type: str = "EEG",
         exec_sec: float = 45.0,
         rest_sec: float = 45.0,
-        resolve_timeout: float = 8.0,
+        resolve_timeout: float = 90.0,
     ) -> None:
-        from pylsl import StreamInlet, resolve_byprop, resolve_bypred
+        import time as _time
+
+        from pylsl import StreamInlet, resolve_streams
 
         # Target channels: an explicit --lsl-channels list wins, else the named montage.
         self.channel_names = channels if channels else config.MONTAGES[montage]
@@ -239,11 +241,17 @@ class LslSource:
             raise ValueError(f"Montage {self.channel_names} has no motor channels "
                              f"(need some of {sorted(config.MOTOR_SITES)})")
 
-        # Find the stream: by name if given, otherwise the first EEG-type stream.
-        if stream_name:
-            infos = resolve_bypred(f"name='{stream_name}'", 1, resolve_timeout)
-        else:
-            infos = resolve_byprop("type", stream_type, 1, resolve_timeout)
+        # Find the stream. resolve_streams() is the most reliable resolver with a
+        # KnownPeers direct link (LSL discovery over a phone hotspot is slow and flaky),
+        # so retry it until the stream appears or we hit resolve_timeout.
+        infos = []
+        deadline = _time.monotonic() + resolve_timeout
+        while not infos and _time.monotonic() < deadline:
+            alls = resolve_streams(wait_time=5.0)
+            if stream_name:
+                infos = [s for s in alls if s.name() == stream_name]
+            else:
+                infos = [s for s in alls if s.type() == stream_type]
         if not infos:
             raise RuntimeError("No LSL stream found. Is the outlet running and on the same "
                                "network? Firewall / blocked multicast can hide it (docs/15).")
