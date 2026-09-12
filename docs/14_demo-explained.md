@@ -4,7 +4,7 @@ Updated September 8, 2026. This guide supersedes the historical demo claims in d
 
 ## Purpose
 
-NeuroLoop is a research prototype for personalized motor-imagery feedback. We ask whether EEG recorded while someone imagines a movement resembles their own movement calibration more than their rest calibration. A virtual hand makes that score visible. Rehabilitation is a possible future application; pain reduction, therapeutic benefit, and performance in amputees have not been demonstrated.
+rEEGain is a research prototype for personalized motor-imagery feedback. We ask whether EEG recorded while someone imagines a movement resembles their own movement calibration more than their rest calibration. A virtual hand makes that score visible. Rehabilitation is a possible future application; pain reduction, therapeutic benefit, and performance in amputees have not been demonstrated.
 
 The hand does not decode individual finger positions. One smoothed scalar drives a predefined open-to-grip animation. The score is pattern similarity, not a probability of imagining correctly, a pain measurement, or a validated measure of imagery vividness.
 

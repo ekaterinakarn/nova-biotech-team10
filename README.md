@@ -1,4 +1,4 @@
-# NeuroLoop — Team 10
+# rEEGain — Team 10
 
 **A closed-loop EEG system for phantom limb pain therapy.**
 NOVATech × McHacks Buildathon 2026, sponsored by ANT Neuro.

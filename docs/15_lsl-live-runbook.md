@@ -50,7 +50,7 @@ and EE‑511 may differ from the EE‑410/411 ids.
 python scripts/06_brainflow_to_lsl.py --board-id <EE511_ID> \
     --channel-rows <rows> --labels FC3,FC4,C3,C1,Cz,C2,C4,CP3,CP4,Fz,Pz,Oz
 # On your Mac (same network):
-python src/server.py --source lsl --lsl-name NeuroLoopTest --calib-sec 30
+python src/server.py --source lsl --lsl-name rEEGainTest --calib-sec 30
 ```
 
 **Path C — ANT native LSL → your Mac:**
@@ -83,13 +83,13 @@ tested across two amplifiers" — is stronger.
 # Terminal 1 — a synthetic LSL EEG outlet (12-lead eego layout):
 python scripts/05_lsl_test.py --montage eego
 # Terminal 2 — the real server consuming it:
-python src/server.py --source lsl --lsl-name NeuroLoopTest --calib-sec 15
+python src/server.py --source lsl --lsl-name rEEGainTest --calib-sec 15
 ```
 Or exercise the BrainFlow→LSL bridge itself with BrainFlow's synthetic board:
 ```
 python scripts/06_brainflow_to_lsl.py --board-id -1 \
     --labels FC3,FC4,C3,C1,Cz,C2,C4,CP3,CP4,Fz,Pz,Oz
-python src/server.py --source lsl --lsl-name NeuroLoopTest --calib-sec 15
+python src/server.py --source lsl --lsl-name rEEGainTest --calib-sec 15
 ```
 Both were verified end-to-end on macOS (arm64).
 
