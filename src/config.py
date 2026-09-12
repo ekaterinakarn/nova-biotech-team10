@@ -37,6 +37,36 @@ N_MOTOR: int = len(MOTOR_CHANNELS)       # 9
 MOTOR_IDX: list[int] = [CHANNELS.index(c) for c in MOTOR_CHANNELS]
 
 # --------------------------------------------------------------------------- #
+# Montages for live streaming (LSL). See docs/15_lsl-live-runbook.md.
+# --------------------------------------------------------------------------- #
+# The sensorimotor-strip electrodes the fidelity score is allowed to read. Anything
+# else in a montage (Fz/Pz/Oz/PO7/PO8, ...) is context only — this generalises the
+# occipital-leak fix to ANY montage, so it still works if the eego 24 / NA-246 cap
+# only wires a subset of our 12 channels, or if we fall back to the 8-channel Unicorn.
+MOTOR_SITES: set[str] = {
+    "FC5", "FC3", "FC1", "FCz", "FC2", "FC4", "FC6",
+    "C5", "C3", "C1", "Cz", "C2", "C4", "C6",
+    "CP5", "CP3", "CP1", "CPz", "CP2", "CP4", "CP6",
+}
+
+
+def motor_indices(channel_names: list[str]) -> list[int]:
+    """Indices of the sensorimotor channels within a montage's channel list."""
+    return [i for i, c in enumerate(channel_names) if c in MOTOR_SITES]
+
+
+# g.tec Unicorn Hybrid Black — fixed 8-channel layout (the LSL fallback device).
+# Only C3/Cz/C4 overlap the motor strip, so fidelity runs on 3 motor channels there.
+UNICORN_CHANNELS: list[str] = ["Fz", "C3", "Cz", "C4", "Pz", "PO7", "Oz", "PO8"]
+
+# Named montages selectable with `--montage`. "eego" is our 12-lead default; the eego
+# 24 subset can be given explicitly with `--lsl-channels` if a site isn't wired.
+MONTAGES: dict[str, list[str]] = {
+    "eego": CHANNELS,
+    "unicorn": UNICORN_CHANNELS,
+}
+
+# --------------------------------------------------------------------------- #
 # Sampling & windowing.
 # --------------------------------------------------------------------------- #
 # PhysioNet EEGMMIDB is 160 Hz. The live eego samples faster; sources.py sets its own

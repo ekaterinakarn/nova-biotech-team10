@@ -55,7 +55,10 @@ class NeuroLoopServer:
         self.source = make_source(source_kind, subject=subject, **live_options)
         self.source_kind = source_kind
         self.quality = None
-        self.scorer = FidelityScorer()
+        # Live/LSL montages may have fewer channels than our 12-lead default; the source
+        # tells the scorer which columns are motor channels (else the default MOTOR_IDX).
+        self.scorer = FidelityScorer(
+            channel_idx=getattr(self.source, "motor_idx", config.MOTOR_IDX))
         self.clients: set = set()
         self.sham = sham
         self.condition = ""            # set by the UI for the 5-condition demo
@@ -154,13 +157,21 @@ def serve_ui(port: int) -> None:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="NeuroLoop realtime server")
-    ap.add_argument("--source", choices=["sim", "file", "live"], default="file")
+    ap.add_argument("--source", choices=["sim", "file", "live", "lsl"], default="file")
     ap.add_argument("--subject", type=int, default=4, help="PhysioNet subject for --source file")
     ap.add_argument("--sham", action="store_true", help="start with the model broken (chance)")
     ap.add_argument("--ui-port", type=int, default=config.WS_PORT + 1)
+    # --source live (BrainFlow, Windows/Linux)
     ap.add_argument("--board-id", type=int, help="Mentor-confirmed BrainFlow board ID")
     ap.add_argument("--channel-rows", help="12 comma-separated BrainFlow rows in config.CHANNELS order")
     ap.add_argument("--serial-port", default="")
+    # --source lsl (Lab Streaming Layer, cross-platform incl. macOS)
+    ap.add_argument("--montage", choices=list(config.MONTAGES), default="eego",
+                    help="channel layout to pull from the LSL stream")
+    ap.add_argument("--lsl-name", help="exact LSL stream name (else the first EEG stream)")
+    ap.add_argument("--lsl-channels", help="comma-separated channel labels, overrides --montage "
+                                           "(e.g. for an eego 24 subset)")
+    ap.add_argument("--calib-sec", type=float, help="seconds per calibration block (live/lsl)")
     args = ap.parse_args()
     live_options = {}
     if args.source == "live":
@@ -171,6 +182,13 @@ def main() -> None:
         except ValueError:
             ap.error("channel rows must be comma-separated integers")
         live_options = dict(board_id=args.board_id, channel_rows=rows, serial_port=args.serial_port)
+    elif args.source == "lsl":
+        channels = ([c.strip() for c in args.lsl_channels.split(",")]
+                    if args.lsl_channels else None)
+        live_options = dict(montage=args.montage, channels=channels, stream_name=args.lsl_name)
+    if args.calib_sec is not None and args.source in ("live", "lsl"):
+        live_options["exec_sec"] = args.calib_sec
+        live_options["rest_sec"] = args.calib_sec
 
     serve_ui(args.ui_port)
     server = NeuroLoopServer(args.source, args.subject, args.sham, **live_options)

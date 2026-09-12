@@ -7,11 +7,14 @@ class QualityGate:
     """Compare (12, time) channel variances to a calibration median in source units."""
     def __init__(self, epochs):
         self.reference = np.median(np.var(epochs, axis=-1), axis=0)
+        # Channel count comes from the calibration data, so the gate works for any
+        # montage (12-lead eego, 8-channel Unicorn, ...), not just config.N_CHANNELS.
+        self.n_channels = self.reference.shape[0]
         if not np.isfinite(self.reference).all() or np.any(self.reference <= 0):
             raise ValueError("Calibration contains flat/non-finite channels; repeat calibration")
 
     def check(self, window):
-        if window.ndim != 2 or window.shape[0] != config.N_CHANNELS or window.shape[1] < 2:
+        if window.ndim != 2 or window.shape[0] != self.n_channels or window.shape[1] < 2:
             return False
         if not np.isfinite(window).all():
             return False

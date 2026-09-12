@@ -1,16 +1,20 @@
-"""Three interchangeable EEG sources, all matching the Source contract (contracts.py).
+"""Interchangeable EEG sources, all matching the Source contract (contracts.py).
 
     SimSource  — synthetic data; how you demo/test with no hardware and no data files.
     FileSource — replays curated PhysioNet epochs at two seconds per window. THE MAC DEMO.
-    LiveSource — BrainFlow -> ANT Neuro eego. Written blind; runs on Windows on Sept 12.
+    LiveSource — BrainFlow -> ANT Neuro eego. Streams on Windows/Linux only.
+    LslSource  — Lab Streaming Layer inlet; cross-platform, incl. macOS. Pulls the eego
+                 (or g.tec Unicorn) over the network by CHANNEL LABEL. See docs/15.
 
 server.py holds one of these and never knows which. Swapping them is one line
-(--source sim|file|live), which is the whole point of the seam (docs/02).
+(--source sim|file|live|lsl), which is the whole point of the seam (docs/02).
 
 Every source provides:
     .fs                     sampling rate (Hz) of the windows it yields
-    .calibration_windows()  -> (X_exec, X_rest), each (n_epochs, 12, n_times)
-    .stream()               -> yields (12, n_times) windows, one per call
+    .calibration_windows()  -> (X_exec, X_rest), each (n_epochs, n_channels, n_times)
+    .stream()               -> yields (n_channels, n_times) windows, one per call
+Live/LSL sources also expose .motor_idx (which channels the scorer reads) so montages
+with fewer channels than our 12-lead default still work.
 """
 
 from __future__ import annotations
@@ -20,6 +24,22 @@ from typing import Iterator
 import numpy as np
 
 from src import config, data
+
+
+def window_filter(raw: np.ndarray, fs: float) -> np.ndarray:
+    """Notch 60 Hz + band-pass 8-30 Hz on one window (n_channels, n_times).
+
+    A windowed IIR (filtfilt) filter, applied identically to calibration and inference
+    windows so the covariance features are consistent. This is what makes the LIVE path
+    match the offline science (docs/09) — raw amplifier data must be filtered before it
+    reaches the scorer, exactly like the PhysioNet path filters in data.py.
+    """
+    from scipy.signal import butter, sosfiltfilt, iirnotch, filtfilt
+    if fs > 2 * config.NOTCH_HZ:
+        b, a = iirnotch(config.NOTCH_HZ, 30, fs)
+        raw = filtfilt(b, a, raw, axis=-1)
+    sos = butter(4, config.BAND_HZ, btype="bandpass", fs=fs, output="sos")
+    return sosfiltfilt(sos, raw, axis=-1)
 
 
 # --------------------------------------------------------------------------- #
@@ -189,12 +209,124 @@ class LiveSource:
 
 
 # --------------------------------------------------------------------------- #
-def make_source(kind: str, subject: int = 1, **live_options):
+# LslSource — Lab Streaming Layer inlet. The cross-platform path onto the Mac.
+# --------------------------------------------------------------------------- #
+class LslSource:
+    """Pull EEG from an LSL outlet on the network (works on macOS, unlike BrainFlow's
+    eego backend). Picks our montage channels FROM THE STREAM BY LABEL, so it adapts to
+    the eego 24 (a subset of the 64) or the 8-channel Unicorn without code changes; a
+    missing channel raises a clear error listing what the stream actually offers.
+
+    Both the recording laptop (running the outlet) and this Mac must be on the same
+    network; firewalls / blocked multicast are the usual failure. See docs/15."""
+
+    def __init__(
+        self,
+        montage: str = "eego",
+        channels: list[str] | None = None,
+        stream_name: str | None = None,
+        stream_type: str = "EEG",
+        exec_sec: float = 45.0,
+        rest_sec: float = 45.0,
+        resolve_timeout: float = 8.0,
+    ) -> None:
+        from pylsl import StreamInlet, resolve_byprop, resolve_bypred
+
+        # Target channels: an explicit --lsl-channels list wins, else the named montage.
+        self.channel_names = channels if channels else config.MONTAGES[montage]
+        self.motor_idx = config.motor_indices(self.channel_names)
+        if not self.motor_idx:
+            raise ValueError(f"Montage {self.channel_names} has no motor channels "
+                             f"(need some of {sorted(config.MOTOR_SITES)})")
+
+        # Find the stream: by name if given, otherwise the first EEG-type stream.
+        if stream_name:
+            infos = resolve_bypred(f"name='{stream_name}'", 1, resolve_timeout)
+        else:
+            infos = resolve_byprop("type", stream_type, 1, resolve_timeout)
+        if not infos:
+            raise RuntimeError("No LSL stream found. Is the outlet running and on the same "
+                               "network? Firewall / blocked multicast can hide it (docs/15).")
+
+        self._inlet = StreamInlet(infos[0], max_buflen=60)
+        info = self._inlet.info()
+        self.fs = info.nominal_srate() or config.FS
+        self.n_times = config.window_samples(self.fs)
+        self._exec_sec, self._rest_sec = exec_sec, rest_sec
+
+        # Map each of our channels to a column in the stream, matched by label.
+        stream_labels = self._read_labels(info)
+        lut = {lab.strip().upper(): i for i, lab in enumerate(stream_labels)}
+        missing = [c for c in self.channel_names if c.upper() not in lut]
+        if missing:
+            raise RuntimeError(f"Stream is missing montage channels {missing}. "
+                               f"Available: {stream_labels}. Use --lsl-channels to match.")
+        self._pick = [lut[c.upper()] for c in self.channel_names]
+        self._buf = np.zeros((len(self.channel_names), 0))
+        print(f"LSL: '{info.name()}' @ {self.fs:.0f} Hz -> {len(self.channel_names)} channels "
+              f"({montage}); {len(self.motor_idx)} motor")
+
+    @staticmethod
+    def _read_labels(info) -> list[str]:
+        """Channel labels from the LSL stream description (blank -> use indices)."""
+        labels, ch = [], info.desc().child("channels").child("channel")
+        for _ in range(info.channel_count()):
+            labels.append(ch.child_value("label"))
+            ch = ch.next_sibling()
+        return labels if any(labels) else [str(i) for i in range(info.channel_count())]
+
+    def _pull(self, max_samples: int) -> np.ndarray:
+        """Pull available samples, return picked channels as (n_channels, n_new)."""
+        samples, _ = self._inlet.pull_chunk(timeout=1.0, max_samples=max_samples)
+        if not samples:
+            return np.zeros((len(self.channel_names), 0))
+        return np.asarray(samples).T[self._pick, :]
+
+    def calibration_windows(self) -> tuple[np.ndarray, np.ndarray]:
+        import time
+
+        def collect(seconds: float) -> np.ndarray:
+            buf = np.zeros((len(self.channel_names), 0))
+            end = time.monotonic() + seconds
+            while time.monotonic() < end:
+                buf = np.concatenate([buf, self._pull(int(self.fs * 2))], axis=1)
+            step = self.n_times
+            wins = [window_filter(buf[:, i:i + step], self.fs)
+                    for i in range(0, buf.shape[1] - step + 1, step)]
+            return (np.stack(wins) if wins
+                    else np.empty((0, len(self.channel_names), step)))
+
+        print(f"CALIBRATION: attempt to MOVE for {self._exec_sec:.0f}s...")
+        X_exec = collect(self._exec_sec)
+        print(f"CALIBRATION: now REST for {self._rest_sec:.0f}s...")
+        X_rest = collect(self._rest_sec)
+        return X_exec, X_rest
+
+    def stream(self) -> Iterator[np.ndarray]:
+        while True:
+            # Top up a rolling buffer until we have a full window, then yield the newest.
+            while self._buf.shape[1] < self.n_times:
+                self._buf = np.concatenate([self._buf, self._pull(int(self.fs * 2))], axis=1)
+            keep = self.n_times * 3
+            self._buf = self._buf[:, -keep:]
+            yield window_filter(self._buf[:, -self.n_times:], self.fs)
+
+    def close(self):
+        try:
+            self._inlet.close_stream()
+        except Exception:
+            pass
+
+
+# --------------------------------------------------------------------------- #
+def make_source(kind: str, subject: int = 1, **options):
     """Factory used by server.py: map a --source string to a Source instance."""
     if kind == "sim":
         return SimSource()
     if kind == "file":
         return FileSource(subject=subject)
     if kind == "live":
-        return LiveSource(**live_options)
-    raise ValueError(f"unknown source {kind!r} (use sim|file|live)")
+        return LiveSource(**options)
+    if kind == "lsl":
+        return LslSource(**options)
+    raise ValueError(f"unknown source {kind!r} (use sim|file|live|lsl)")

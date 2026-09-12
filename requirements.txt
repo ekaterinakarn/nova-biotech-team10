@@ -26,8 +26,13 @@ websockets>=12.0      # 20 Hz Frame stream from server.py to the Canvas UI
 
 # --- Live amplifier (Sept 12 only) ---
 # NOTE: brainflow IMPORTS on macOS, but the ANT Neuro (eego) device backend only
-# STREAMS on Windows/Linux. On the Mac we develop against SimSource/FileSource.
+# STREAMS on Windows/Linux. On the Mac we develop against SimSource/FileSource, or
+# consume the amplifier over LSL (cross-platform) — see docs/15_lsl-live-runbook.md.
 brainflow>=5.12
+
+# Lab Streaming Layer: the cross-platform path to get live EEG onto the Mac
+# (LslSource, the BrainFlow->LSL bridge, and the synthetic-outlet test).
+pylsl>=1.16
 
 # --- Dev / tests ---
 pytest>=8.0
