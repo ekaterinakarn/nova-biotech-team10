@@ -40,16 +40,30 @@ function tick(){
   el('renderer-status').textContent=hand.status;
   el('mode').textContent=manual?'MANUAL · NO EEG':stale?'WAITING':!valid?'SIGNAL PAUSED':f.sham?'CONTROL · 0.5':'MODEL FEEDBACK';
   el('score').textContent=manual||!valid?'—':Math.round(f.fidelity*100);
-  el('fidelity-bar').style.width=`${manual||!valid?0:f.fidelity*100}%`;
+  el('fidelity-bar').style.transform=`scaleX(${manual||!valid?0:f.fidelity})`;
   el('fidelity-bar').style.background=colors[state]||colors.rest;
   el('state').textContent=manual?'MANUAL EXPLORATION':stale?'WAITING FOR SIGNAL':!valid?'SIGNAL PAUSED':f.sham?'IDENTICAL-TEMPLATE CONTROL':`${state.toUpperCase()} PATTERN`;
   el('quality').textContent=stale?'Signal quality unavailable':f.signal_ok?'● Window passed quality checks':'● Window rejected · feedback paused';
-  el('coaching').textContent=manual?'Move the slider to explore the hand. EEG does not control this pose.':stale?'Start the server, or explore the hand with the manual slider below.':f.sham?'Control demonstration: both reference distances are treated as equal.':f.coaching;
+  el('coaching').textContent=manual?'Move the slider to explore the hand. EEG does not control this pose.':stale?'Waiting for your session. You can explore the hand using the controls below.':f.sham?'Control demonstration: both reference distances are treated as equal.':f.coaching;
   el('distances').textContent=valid&&!f.sham?`d_exec ${f.d_exec} · d_rest ${f.d_rest}`:'d_exec — · d_rest —';
-  el('condition').textContent=(f?.source==='file'||f?.source==='cnt')?f.recorded_condition:(f?.condition||'Ready when you are');
+  el('condition').textContent=(f?.source==='file'||f?.source==='cnt')?f.recorded_condition:((f?.source==='live'||f?.source==='lsl')&&f.instruction?f.instruction:(f?.condition||'Ready when you are'));
   el('sham').disabled=stale||manual;
-  document.querySelectorAll('[data-condition]').forEach(b=>{b.disabled=stale||manual||f?.source==='file'||f?.source==='sim';b.classList.toggle('active',b.dataset.condition===f?.condition);});
-  el('condition-note').style.display=f?.source==='sim'?'':'none';
+  document.querySelectorAll('[data-condition]').forEach(b=>{b.disabled=stale||manual||f?.source==='file'||f?.source==='cnt'||f?.source==='sim';b.classList.toggle('active',b.dataset.condition===f?.condition);});
+  const source=f?.source;
+  // Guided session (live/lsl): the Start button runs the on-screen protocol.
+  const guided=source==='live'||source==='lsl';
+  const phases=['prepare','cal_move','cal_rest','build','rest','squeeze','imagine_feel','rest2','imagine_watch','math','feel_again','done'];
+  const inSession=!!f&&phases.includes(f.phase);
+  el('start-session').disabled=!guided||stale;
+  el('start-session').dataset.on=inSession?'1':'0';
+  el('start-session').textContent=inSession?'■ Stop session':'▶ Start guided session';
+  el('countdown').textContent=inSession&&f.countdown>0?`${f.countdown}s`:'';
+  el('guided-hint').style.display=guided&&!inSession?'':'none';
+  el('condition-note').textContent=manual?'Manual exploration is on. Cues are paused.':stale?'Connect an EEG source to choose participant cues.':source==='file'||source==='cnt'?'Cues follow the recording during replay.':source==='sim'?'Synthetic rehearsal runs automatically. Use manual exploration to try the hand.':guided?'Press Start for the guided session, or set a cue manually below.':'Choose an instruction for the participant.';
+  el('state').style.color=colors[state]||colors.rest;
+  el('export').disabled=rows.length===0;
+  el('export-status').textContent=rows.length?`${rows.length.toLocaleString()} frames recorded`:'No frames recorded yet';
+  el('trace-empty').hidden=history.some(p=>p.value!==null);
   drawTrace();requestAnimationFrame(tick);
 }
 function drawTrace(){
@@ -79,9 +93,10 @@ requestAnimationFrame(tick);
 el('manual').onchange=()=>{manual=el('manual').checked;el('slider').disabled=!manual;previous=null;};
 el('sham').onchange=()=>{if(ws?.readyState===1)ws.send(el('sham').checked?'sham:on':'sham:off');};
 document.querySelectorAll('[data-condition]').forEach(b=>b.onclick=()=>{if(ws?.readyState===1)ws.send(`condition:${b.dataset.condition}`);});
+el('start-session').onclick=()=>{if(ws?.readyState!==1)return;ws.send(el('start-session').dataset.on==='1'?'session:stop':'session:start');};
 el('export').onclick=()=>{
   const keys=['observed','t','source','recorded_condition','condition','fidelity','activation','signal_ok','sham','manual'];
   const quote=v=>'"'+String(v??'').replaceAll('"','""')+'"';
   const csv=[keys.join(','),...rows.map(r=>keys.map(k=>quote(r[k])).join(','))].join('\n');
-  const url=URL.createObjectURL(new Blob([csv],{type:'text/csv'})),a=document.createElement('a');a.href=url;a.download='neuroloop-session.csv';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+  const url=URL.createObjectURL(new Blob([csv],{type:'text/csv'})),a=document.createElement('a');a.href=url;a.download='rEEGain-session.csv';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
 };

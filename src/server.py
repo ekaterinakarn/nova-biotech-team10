@@ -50,6 +50,24 @@ def _state_and_coaching(fidelity: float) -> tuple[str, str]:
     return "ambiguous", "Focus on the sensation of squeezing, not the picture."
 
 
+# The on-screen guided session (live/lsl): (phase key, instruction, seconds, collect).
+# `collect` = "exec"/"rest" builds the calibration templates; None = a scored test step.
+SESSION_PROTOCOL = [
+    ("prepare",       "Get ready — sit still, arm relaxed. The hand mirrors your brain.", 5, None),
+    ("cal_move",      "Calibration 1 of 2: squeeze your RIGHT fist — hard and steady.",  30, "exec"),
+    ("cal_rest",      "Calibration 2 of 2: relax completely — hand open, perfectly still.", 30, "rest"),
+    ("build",         "Building your personal model…",                                    2, "build"),
+    ("rest",          "Rest — relax your hand, do nothing.",                             12, None),
+    ("squeeze",       "Squeeze your right fist.",                                        12, None),
+    ("imagine_feel",  "Imagine squeezing — FEEL the tension in your hand. Don't move.",  18, None),
+    ("rest2",         "Rest — relax.",                                                   12, None),
+    ("imagine_watch", "Now just picture your hand moving, like watching a video.",       12, None),
+    ("math",          "Count backwards from 300 by 7s.",                                 12, None),
+    ("feel_again",    "Feel the squeeze again — imagine the tension.",                   15, None),
+    ("done",          "Session complete — great work!",                                  6, None),
+]
+
+
 class NeuroLoopServer:
     """Owns the source, the scorer, the connected clients, and the demo controls."""
 
@@ -66,6 +84,11 @@ class NeuroLoopServer:
         self.condition = ""            # set by the UI for the 5-condition demo
         self._activation = 0.0         # smoothed value (EMA), drives the hand
         self._templates: tuple[np.ndarray, np.ndarray] | None = None
+        # Guided-session state (live/lsl): the browser "Start" button runs a scripted
+        # sequence of on-screen instructions that calibrates then tests the participant.
+        self.session = None            # None (idle) | "running" | "free"
+        self._start_requested = False
+        self._stop_requested = False
 
     def calibrate(self) -> None:
         """Build the personal templates from the source's calibration windows."""
@@ -90,10 +113,108 @@ class NeuroLoopServer:
                     self.sham = True
                 elif message == "sham:off":
                     self.sham = False
+                elif message == "session:start":
+                    self._start_requested = True
+                elif message == "session:stop":
+                    self._stop_requested = True
                 elif message.startswith("condition:"):
                     self.condition = message.split(":", 1)[1]
         finally:
             self.clients.discard(ws)
+
+    @staticmethod
+    def _basic_ok(window) -> bool:
+        """Liveness check before a quality model exists: finite and not flat."""
+        return bool(np.isfinite(window).all() and window.std() > 1e-9)
+
+    def _build_templates(self, exec_w: list, rest_w: list) -> None:
+        """Build the quality gate + fidelity templates from collected calibration windows."""
+        X_exec, X_rest = np.stack(exec_w), np.stack(rest_w)
+        self.quality = QualityGate(np.concatenate([X_exec, X_rest]))
+        X_exec = np.array([w for w in X_exec if self.quality.check(w)])
+        X_rest = np.array([w for w in X_rest if self.quality.check(w)])
+        if min(len(X_exec), len(X_rest)) < 5:
+            raise ValueError("too few clean windows")
+        self.scorer.calibrate(X_exec, X_rest)
+        self._templates = (self.scorer.C_exec.copy(), self.scorer.C_rest.copy())
+
+    def _emit(self, started, fidelity, valid, d_exec, d_rest, phase, instruction, countdown):
+        """Build and broadcast one Frame with the guided-session fields."""
+        import json
+        shown = 0.5 if self.sham else fidelity
+        self._activation = (config.SMOOTHING * self._activation
+                            + (1 - config.SMOOTHING) * (shown if valid else 0))
+        state = _state_and_coaching(shown)[0] if valid else "rest"
+        frame = Frame(t=round(time.monotonic() - started, 3), fidelity=round(shown, 3),
+                      activation=round(self._activation, 3), state=state, condition=phase,
+                      signal_ok=valid, coaching=instruction,
+                      d_exec=round(d_exec, 3), d_rest=round(d_rest, 3))
+        if self.clients:
+            payload = json.loads(frame.to_json())
+            payload.update(source=self.source_kind, sham=self.sham, recorded_condition="",
+                           phase=phase, instruction=instruction, countdown=int(countdown))
+            websockets.broadcast(self.clients, json.dumps(payload))
+
+    async def guided_session(self) -> None:
+        """Live/LSL: an on-screen guided protocol. Idle until the browser sends
+        'session:start', then step through calibration + test, broadcasting each
+        instruction + countdown while the hand shows the participant's live score."""
+        period = 1.0 / config.STREAM_HZ
+        stream = self.source.stream()
+        started = time.monotonic()
+        idx, phase_start = 0, 0.0
+        exec_w, rest_w = [], []
+        ready = False  # templates built?
+        while True:
+            window = await asyncio.to_thread(next, stream)
+            now = time.monotonic()
+
+            if self._start_requested:            # (re)start a session cleanly
+                self.session, idx, phase_start = "running", 0, now
+                exec_w, rest_w, ready = [], [], False
+                self.scorer.C_exec = self.scorer.C_rest = None
+                self._start_requested = False
+            if self._stop_requested:
+                self.session, self._stop_requested = None, False
+
+            phase, instruction, countdown = "idle", \
+                "Fit the cap, then press ‘Start guided session’ when ready.", 0
+            if self.session == "running":
+                key, text, dur, collect = SESSION_PROTOCOL[idx]
+                phase, instruction, countdown = key, text, max(0, round(dur - (now - phase_start)))
+                if collect == "exec":
+                    exec_w.append(window)
+                elif collect == "rest":
+                    rest_w.append(window)
+                if now - phase_start >= dur:                     # advance to next phase
+                    idx += 1
+                    phase_start = now
+                    if idx < len(SESSION_PROTOCOL) and SESSION_PROTOCOL[idx][3] == "build":
+                        try:
+                            self._build_templates(exec_w, rest_w)
+                            ready = True
+                        except Exception as exc:                # bad calibration -> restart
+                            self.session, idx = None, 0
+                            instruction = f"Calibration failed ({exc}). Check electrodes, press Start again."
+                    if idx >= len(SESSION_PROTOCOL):
+                        self.session = "free"
+            elif self.session == "free":
+                phase, instruction, countdown = "free", "Free run — imagine squeezing to move the hand.", 0
+
+            # Score once the model exists and we're not mid-calibration.
+            valid = self._basic_ok(window)
+            fidelity, d_exec, d_rest = 0.5, 0.0, 0.0
+            if ready and phase not in ("cal_move", "cal_rest", "build", "prepare"):
+                valid = self.quality.check(window)
+                if valid:
+                    d_exec, d_rest = self.scorer.distances(window)
+                    tot = d_exec + d_rest
+                    fidelity = d_rest / tot if tot > 0 else 0.5
+
+            deadline = now + config.STEP_SEC
+            while time.monotonic() < deadline:
+                self._emit(started, fidelity, valid, d_exec, d_rest, phase, instruction, countdown)
+                await asyncio.sleep(period)
 
     async def produce(self) -> None:
         """Score windows and broadcast Frames at STREAM_HZ."""
@@ -135,10 +256,18 @@ class NeuroLoopServer:
                 await asyncio.sleep(period)
 
     async def run(self) -> None:
-        await asyncio.to_thread(self.calibrate)
-        async with websockets.serve(self.handle_client, config.WS_HOST, config.WS_PORT):
-            print(f"WebSocket streaming on ws://{config.WS_HOST}:{config.WS_PORT}")
-            await self.produce()
+        # Live/LSL: serve immediately and run the browser-guided session (calibration is
+        # part of the on-screen protocol). Replays (file/cnt/sim): auto-calibrate first.
+        if self.source_kind in ("live", "lsl"):
+            async with websockets.serve(self.handle_client, config.WS_HOST, config.WS_PORT):
+                print(f"WebSocket streaming on ws://{config.WS_HOST}:{config.WS_PORT}")
+                print("Waiting for 'Start guided session' from the browser…")
+                await self.guided_session()
+        else:
+            await asyncio.to_thread(self.calibrate)
+            async with websockets.serve(self.handle_client, config.WS_HOST, config.WS_PORT):
+                print(f"WebSocket streaming on ws://{config.WS_HOST}:{config.WS_PORT}")
+                await self.produce()
 
 
 class DemoUIHandler(http.server.SimpleHTTPRequestHandler):
@@ -158,7 +287,7 @@ def serve_ui(port: int) -> None:
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="NeuroLoop realtime server")
+    ap = argparse.ArgumentParser(description="rEEGain realtime server")
     ap.add_argument("--source", choices=["sim", "file", "live", "lsl", "cnt"], default="file")
     ap.add_argument("--cnt-file", help="path to a recorded ANT eego .cnt session (--source cnt)")
     ap.add_argument("--subject", type=int, default=4, help="PhysioNet subject for --source file")
