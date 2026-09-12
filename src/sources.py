@@ -320,11 +320,17 @@ class LslSource:
 
     def stream(self) -> Iterator[np.ndarray]:
         while True:
-            # Top up a rolling buffer until we have a full window, then yield the newest.
-            while self._buf.shape[1] < self.n_times:
-                self._buf = np.concatenate([self._buf, self._pull(int(self.fs * 2))], axis=1)
+            # ALWAYS pull fresh samples each tick so the window slides forward with new
+            # data. (Only topping up "until full" froze the live hand once the buffer
+            # filled, because it then stopped pulling and yielded the same stale window.)
+            new = self._pull(int(self.fs * 2))
+            if new.shape[1]:
+                self._buf = np.concatenate([self._buf, new], axis=1)
             keep = self.n_times * 3
-            self._buf = self._buf[:, -keep:]
+            if self._buf.shape[1] > keep:
+                self._buf = self._buf[:, -keep:]
+            if self._buf.shape[1] < self.n_times:
+                continue                      # not enough samples for a window yet
             yield window_filter(self._buf[:, -self.n_times:], self.fs)
 
     def close(self):
