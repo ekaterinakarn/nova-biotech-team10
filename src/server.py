@@ -157,7 +157,8 @@ def serve_ui(port: int) -> None:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="NeuroLoop realtime server")
-    ap.add_argument("--source", choices=["sim", "file", "live", "lsl"], default="file")
+    ap.add_argument("--source", choices=["sim", "file", "live", "lsl", "cnt"], default="file")
+    ap.add_argument("--cnt-file", help="path to a recorded ANT eego .cnt session (--source cnt)")
     ap.add_argument("--subject", type=int, default=4, help="PhysioNet subject for --source file")
     ap.add_argument("--sham", action="store_true", help="start with the model broken (chance)")
     ap.add_argument("--ui-port", type=int, default=config.WS_PORT + 1)
@@ -186,6 +187,10 @@ def main() -> None:
         channels = ([c.strip() for c in args.lsl_channels.split(",")]
                     if args.lsl_channels else None)
         live_options = dict(montage=args.montage, channels=channels, stream_name=args.lsl_name)
+    elif args.source == "cnt":
+        if not args.cnt_file:
+            ap.error("cnt requires --cnt-file <path to .cnt recording>")
+        live_options = dict(cnt_file=args.cnt_file)
     if args.calib_sec is not None and args.source in ("live", "lsl"):
         live_options["exec_sec"] = args.calib_sec
         live_options["rest_sec"] = args.calib_sec

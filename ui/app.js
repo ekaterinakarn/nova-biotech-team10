@@ -18,9 +18,9 @@ function connect(){
     if(eligible&&previous?.eligible)dose+=previous.fidelity*dt;
     previous={...f,eligible};latest=f;received=now;
     rows.push({...f,manual,observed});if(rows.length>72000)rows.shift(); // bounded one-hour export at 20 Hz
-    history.push({time:now,value:eligible?f.fidelity:null});history=history.filter(p=>now-p.time<60000);
+    history.push({time:now,value:eligible?f.fidelity:null,cond:f.recorded_condition||f.condition||''});history=history.filter(p=>now-p.time<60000);
     el('sham').checked=Boolean(f.sham);
-    el('source').textContent={file:'PhysioNet · curated epoch replay',sim:'Synthetic · rehearsal data',live:'Live EEG · amplifier'}[f.source]||'Unknown data source';
+    el('source').textContent={file:'PhysioNet · curated epoch replay',sim:'Synthetic · rehearsal data',live:'Live EEG · amplifier',lsl:'Live EEG · LSL stream',cnt:'Recorded eego session · replay'}[f.source]||'Unknown data source';
     el('elapsed').textContent=`${Math.floor(observed/60)}:${String(Math.floor(observed%60)).padStart(2,'0')} observed`;
     el('dose').textContent=`${dose.toFixed(1)} score·s · valid normal feedback`;
   };
@@ -46,7 +46,7 @@ function tick(){
   el('quality').textContent=stale?'Signal quality unavailable':f.signal_ok?'● Window passed quality checks':'● Window rejected · feedback paused';
   el('coaching').textContent=manual?'Move the slider to explore the hand. EEG does not control this pose.':stale?'Start the server, or explore the hand with the manual slider below.':f.sham?'Control demonstration: both reference distances are treated as equal.':f.coaching;
   el('distances').textContent=valid&&!f.sham?`d_exec ${f.d_exec} · d_rest ${f.d_rest}`:'d_exec — · d_rest —';
-  el('condition').textContent=f?.source==='file'?f.recorded_condition:(f?.condition||'Ready when you are');
+  el('condition').textContent=(f?.source==='file'||f?.source==='cnt')?f.recorded_condition:(f?.condition||'Ready when you are');
   el('sham').disabled=stale||manual;
   document.querySelectorAll('[data-condition]').forEach(b=>{b.disabled=stale||manual||f?.source==='file'||f?.source==='sim';b.classList.toggle('active',b.dataset.condition===f?.condition);});
   el('condition-note').style.display=f?.source==='sim'?'':'none';
@@ -56,10 +56,24 @@ function drawTrace(){
   const c=el('trace'),dpr=Math.min(devicePixelRatio||1,2),w=c.clientWidth,h=c.clientHeight;
   if(c.width!==Math.round(w*dpr)||c.height!==Math.round(h*dpr)){c.width=Math.round(w*dpr);c.height=Math.round(h*dpr);}
   const ctx=c.getContext('2d');ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,w,h);
+  const now=performance.now();
   ctx.strokeStyle='#2a3b43';ctx.lineWidth=1;
   for(const fraction of [0,.5,1]){const y=10+fraction*(h-20);ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(w,y);ctx.stroke();}
+  // Event markers: a labelled vertical line wherever the recorded cue changes, so the
+  // fidelity wave can be read against the session's Hand-squeezing / Imagining markers.
+  const condColor=s=>/squeez/i.test(s)?'#72e2c2':/imagin/i.test(s)?'#7cc0e4':/virtual/i.test(s)?'#b79ce0':'#5a6b73';
+  let prev=null;ctx.font='9px -apple-system,sans-serif';ctx.textBaseline='top';
+  for(const p of history){
+    if(p.cond&&p.cond!==prev){
+      const x=w*(1-(now-p.time)/60000),col=condColor(p.cond);
+      ctx.globalAlpha=.5;ctx.strokeStyle=col;ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,h);ctx.stroke();
+      ctx.globalAlpha=1;ctx.fillStyle=col;ctx.fillText(p.cond,x+3,3);
+    }
+    prev=p.cond;
+  }
+  // Fidelity wave on top.
   ctx.strokeStyle='#72e2c2';ctx.lineWidth=2;ctx.beginPath();let pen=false;
-  for(const p of history){const x=w*(1-(performance.now()-p.time)/60000),y=h-10-p.value*(h-20);if(p.value===null){pen=false;continue;}if(pen)ctx.lineTo(x,y);else ctx.moveTo(x,y);pen=true;}ctx.stroke();
+  for(const p of history){const x=w*(1-(now-p.time)/60000),y=h-10-p.value*(h-20);if(p.value===null){pen=false;continue;}if(pen)ctx.lineTo(x,y);else ctx.moveTo(x,y);pen=true;}ctx.stroke();
 }
 requestAnimationFrame(tick);
 el('manual').onchange=()=>{manual=el('manual').checked;el('slider').disabled=!manual;previous=null;};

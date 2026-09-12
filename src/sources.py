@@ -19,6 +19,7 @@ with fewer channels than our 12-lead default still work.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Iterator
 
 import numpy as np
@@ -341,6 +342,70 @@ class LslSource:
 
 
 # --------------------------------------------------------------------------- #
+# CntSource — replay a recorded ANT eego .cnt session through the website.
+# --------------------------------------------------------------------------- #
+class CntSource:
+    """Replay a recorded ANT eego .cnt session so the website shows what the brain did.
+
+    Calibrates on the '1001/Hand squeezing' markers vs a rest baseline, then streams the
+    session chronologically. Needs the `antio` package (mne.io.read_raw_ant)."""
+
+    def __init__(
+        self,
+        cnt_file: str,
+        channels: tuple[str, ...] = ("C3", "Cz"),
+        rest_window: tuple[float, float] = (130.0, 158.0),
+        start_sec: float = 148.0,   # ~12 s of baseline, then the marked task at ~160 s
+        exec_label: str = "1001/Hand squeezing",
+    ) -> None:
+        import mne
+
+        raw = mne.io.read_raw_ant(cnt_file, preload=True, verbose="ERROR")
+        raw.pick(list(channels))
+        raw.notch_filter(config.NOTCH_HZ, verbose="ERROR")
+        raw.filter(config.BAND_HZ[0], config.BAND_HZ[1], verbose="ERROR")
+        self.fs = raw.info["sfreq"]
+        self.n_times = config.window_samples(self.fs)
+        self.channel_names = list(channels)
+        self.motor_idx = config.motor_indices(self.channel_names)
+        self._data = raw.get_data()             # (n_ch, n_times), already filtered
+        self._ann = raw.annotations
+        self._exec_label = exec_label
+        self._rest_window = rest_window
+        self._start = int(start_sec * self.fs)
+        self.recorded_condition = ""
+        print(f"CNT: {Path(cnt_file).name} @ {self.fs:.0f} Hz -> {self.channel_names} "
+              f"({len(self.motor_idx)} motor); {len(self._ann)} markers")
+
+    def _windows_at(self, onsets: list[float]) -> np.ndarray:
+        out = []
+        for o in onsets:
+            i0 = int(o * self.fs)
+            if i0 + self.n_times <= self._data.shape[1]:
+                out.append(self._data[:, i0:i0 + self.n_times])
+        return np.stack(out) if out else np.empty((0, len(self.channel_names), self.n_times))
+
+    def calibration_windows(self) -> tuple[np.ndarray, np.ndarray]:
+        exec_on = [o for o, d in zip(self._ann.onset, self._ann.description)
+                   if d == self._exec_label]
+        rest_on = list(np.arange(self._rest_window[0], self._rest_window[1], config.WINDOW_SEC))
+        return self._windows_at(exec_on), self._windows_at(rest_on)
+
+    def _label_at(self, t: float) -> str:
+        """The most recent marker within 3 s of time t (for the on-screen cue)."""
+        recent = [d for o, d in zip(self._ann.onset, self._ann.description)
+                  if 0 <= t - o <= 3.0 and "impedance" not in d]
+        return recent[-1].split("/")[-1] if recent else "rest / baseline"
+
+    def stream(self) -> Iterator[np.ndarray]:
+        step = int(config.STEP_SEC * self.fs)
+        while True:
+            for i in range(self._start, self._data.shape[1] - self.n_times, step):
+                self.recorded_condition = self._label_at(i / self.fs)
+                yield self._data[:, i:i + self.n_times]
+
+
+# --------------------------------------------------------------------------- #
 def make_source(kind: str, subject: int = 1, **options):
     """Factory used by server.py: map a --source string to a Source instance."""
     if kind == "sim":
@@ -351,4 +416,6 @@ def make_source(kind: str, subject: int = 1, **options):
         return LiveSource(**options)
     if kind == "lsl":
         return LslSource(**options)
-    raise ValueError(f"unknown source {kind!r} (use sim|file|live|lsl)")
+    if kind == "cnt":
+        return CntSource(**options)
+    raise ValueError(f"unknown source {kind!r} (use sim|file|live|lsl|cnt)")
