@@ -19,6 +19,8 @@ import argparse
 import asyncio
 import functools
 import http.server
+import os
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -172,6 +174,8 @@ def main() -> None:
     ap.add_argument("--lsl-name", help="exact LSL stream name (else the first EEG stream)")
     ap.add_argument("--lsl-channels", help="comma-separated channel labels, overrides --montage "
                                            "(e.g. for an eego 24 subset)")
+    ap.add_argument("--lsl-peer", help="IP of the machine running the LSL outlet; sets up a "
+                                       "direct link when Wi-Fi/hotspot blocks LSL discovery")
     ap.add_argument("--calib-sec", type=float, help="seconds per calibration block (live/lsl)")
     args = ap.parse_args()
     live_options = {}
@@ -194,6 +198,15 @@ def main() -> None:
     if args.calib_sec is not None and args.source in ("live", "lsl"):
         live_options["exec_sec"] = args.calib_sec
         live_options["rest_sec"] = args.calib_sec
+
+    # A direct LSL link for when discovery multicast is blocked (venue Wi-Fi / hotspot).
+    # Must be set before pylsl loads liblsl, i.e. before the source is created below.
+    if args.lsl_peer:
+        cfg = os.path.join(tempfile.gettempdir(), "neuroloop_lsl_api.cfg")
+        with open(cfg, "w") as fh:
+            fh.write(f"[lab]\nKnownPeers = {{{args.lsl_peer}}}\n")
+        os.environ["LSLAPICFG"] = cfg
+        print(f"LSL direct link -> {args.lsl_peer}")
 
     serve_ui(args.ui_port)
     server = NeuroLoopServer(args.source, args.subject, args.sham, **live_options)
